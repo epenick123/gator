@@ -7,6 +7,7 @@ package database
 
 import (
 	"context"
+	"database/sql"
 	"time"
 
 	"github.com/google/uuid"
@@ -148,6 +149,21 @@ func (q *Queries) CreateUser(ctx context.Context, arg CreateUserParams) (User, e
 		&i.Name,
 	)
 	return i, err
+}
+
+const deleteUserFeedCombo = `-- name: DeleteUserFeedCombo :exec
+DELETE FROM feed_follows WHERE feed_id IN (SELECT id FROM feeds WHERE feeds.url = $1)
+    AND user_id = $2
+`
+
+type DeleteUserFeedComboParams struct {
+	Column1 sql.NullString
+	Column2 uuid.NullUUID
+}
+
+func (q *Queries) DeleteUserFeedCombo(ctx context.Context, arg DeleteUserFeedComboParams) error {
+	_, err := q.db.ExecContext(ctx, deleteUserFeedCombo, arg.Column1, arg.Column2)
+	return err
 }
 
 const feeds = `-- name: Feeds :many

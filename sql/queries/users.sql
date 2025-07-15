@@ -68,3 +68,8 @@ FROM feed_follows
 JOIN feeds ON feeds.id = feed_follows.feed_id
 join users ON users.id = feed_follows.user_id
 WHERE feed_follows.user_id = $1;
+
+-- name: DeleteUserFeedCombo :exec
+DELETE FROM feed_follows WHERE feed_id IN (SELECT id FROM feeds WHERE feeds.url = $1)
+    AND user_id = $2;
+

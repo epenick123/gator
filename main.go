@@ -251,6 +251,26 @@ func middlewareLoggedIn(handler func(s *state, cmd command, user database.User) 
 	}
 }
 
+func handlerUnfollow(s *state, cmd command, user database.User) error {
+	if len(cmd.args) == 0 {
+		return fmt.Errorf("unfollow requires a feed URL argument")
+	}
+
+	feed, err := s.db.GetFeedByUrl(context.Background(), cmd.args[0])
+	if err != nil {
+		return err
+	}
+
+	params := database.DeleteUserFeedComboParams{
+		Column1: sql.NullString{String: feed.Url, Valid: true},
+		Column2: uuid.NullUUID{UUID: user.ID, Valid: true},
+	}
+
+	s.db.DeleteUserFeedCombo(context.Background(), params)
+	fmt.Printf("Unfollowed feed: %s\n", feed.Url)
+	return nil
+}
+
 func fetchFeed(ctx context.Context, feedURL string) (*RSSFeed, error) {
 	client := &http.Client{}
 	method := http.MethodGet
@@ -316,6 +336,7 @@ func main() {
 	cmds.register("follow", middlewareLoggedIn(handlerFollow))
 	cmds.register("following", middlewareLoggedIn(handlerFollowing))
 	cmds.register("addfeed", middlewareLoggedIn(handlerAddFeed))
+	cmds.register("unfollow", middlewareLoggedIn(handlerUnfollow))
 
 	if len(os.Args) < 2 {
 		fmt.Println("not enough arguments provided")
