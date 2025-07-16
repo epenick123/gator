@@ -5,16 +5,17 @@ import (
 	"database/sql"
 	"encoding/xml"
 	"fmt"
-	"github.com/epenick123/blogagg/internal/config"
-	"github.com/epenick123/blogagg/internal/database"
-	"github.com/google/uuid"
-	_ "github.com/lib/pq"
 	"html"
 	"io"
 	"log"
 	"net/http"
 	"os"
 	"time"
+
+	"github.com/epenick123/blogagg/internal/config"
+	"github.com/epenick123/blogagg/internal/database"
+	"github.com/google/uuid"
+	_ "github.com/lib/pq"
 )
 
 // Define your structs
@@ -147,11 +148,16 @@ func handlerUsers(s *state, cmd command) error {
 }
 
 func handlerAgg(s *state, cmd command) error {
-	rssf, err := fetchFeed(context.Background(), "https://www.wagslane.dev/index.xml")
+
+	time_between_reqs, err := time.ParseDuration(cmd.args[0])
 	if err != nil {
 		return err
 	}
-	fmt.Printf("%+v", rssf)
+	fmt.Printf("Collecting feeds every %v\n", time_between_reqs)
+	ticker := time.NewTicker(time_between_reqs)
+	for ; ; <-ticker.C {
+		scrapeFeeds(s, cmd)
+	}
 	return nil
 }
 
@@ -306,6 +312,25 @@ func fetchFeed(ctx context.Context, feedURL string) (*RSSFeed, error) {
 	}
 
 	return &rssf, err
+}
+
+func scrapeFeeds(s *state, cmd command) error {
+	next_feed, err := s.db.GetNextFeedToFetch(context.Background())
+	if err != nil {
+		return err
+	}
+	err = s.db.MarkFeedFetched(context.Background(), (next_feed.ID))
+	if err != nil {
+		return err
+	}
+	fetched_feed, err := fetchFeed(context.Background(), next_feed.Url)
+	if err != nil {
+		return err
+	}
+	for i := range fetched_feed.Channel.Item {
+		fmt.Printf("%v\n", fetched_feed.Channel.Item[i].Title)
+	}
+	return nil
 }
 
 func main() {
