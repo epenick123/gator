@@ -10,6 +10,8 @@ import (
 	"log"
 	"net/http"
 	"os"
+	"strconv"
+	"strings"
 	"time"
 
 	"github.com/epenick123/blogagg/internal/config"
@@ -277,6 +279,40 @@ func handlerUnfollow(s *state, cmd command, user database.User) error {
 	return nil
 }
 
+func handlerBrowse(s *state, cmd command, user database.User) error {
+	limit := 2 // default limit
+
+	if len(cmd.args) > 0 {
+		parsedLimit, err := strconv.Atoi(cmd.args[0])
+		if err != nil {
+			return fmt.Errorf("invalid limit: %v", err)
+		}
+		limit = parsedLimit
+	}
+
+	posts, err := s.db.GetPostsForUser(context.Background(), database.GetPostsForUserParams{
+		UserID: user.ID,
+		Limit:  int64(limit),
+	})
+	if err != nil {
+		return err
+	}
+
+	for _, post := range posts {
+		fmt.Printf("Title: %s\n", post.Title)
+		fmt.Printf("URL: %s\n", post.Url)
+		if post.Description.Valid {
+			fmt.Printf("Description: %s\n", post.Description.String)
+		}
+		if post.PublishedAt.Valid {
+			fmt.Printf("Published: %s\n", post.PublishedAt.Time.Format(time.RFC3339))
+		}
+		fmt.Println("---")
+	}
+
+	return nil
+}
+
 func fetchFeed(ctx context.Context, feedURL string) (*RSSFeed, error) {
 	client := &http.Client{}
 	method := http.MethodGet
@@ -319,16 +355,48 @@ func scrapeFeeds(s *state, cmd command) error {
 	if err != nil {
 		return err
 	}
-	err = s.db.MarkFeedFetched(context.Background(), (next_feed.ID))
+	err = s.db.MarkFeedFetched(context.Background(), next_feed.ID)
 	if err != nil {
 		return err
 	}
+	fmt.Printf("About to fetch a feed\n")
 	fetched_feed, err := fetchFeed(context.Background(), next_feed.Url)
 	if err != nil {
 		return err
 	}
-	for i := range fetched_feed.Channel.Item {
-		fmt.Printf("%v\n", fetched_feed.Channel.Item[i].Title)
+	fmt.Printf("Fetched feed URL: %v\n", fetched_feed.Channel.Link)
+	fmt.Printf("Found %d items in feed\n", len(fetched_feed.Channel.Item))
+	for _, item := range fetched_feed.Channel.Item {
+		fmt.Println(item.Title)
+		// Parse the published date
+		var publishedAt sql.NullTime
+		if item.PubDate != "" {
+			if parsedTime, err := time.Parse(time.RFC1123Z, item.PubDate); err == nil {
+				publishedAt = sql.NullTime{Time: parsedTime, Valid: true}
+			}
+			// You might need to try other date formats if RFC1123Z doesn't work
+		}
+
+		params := database.CreatePostParams{
+			ID:          uuid.New(),
+			CreatedAt:   time.Now(),
+			UpdatedAt:   time.Now(),
+			Title:       item.Title,
+			Url:         item.Link,
+			Description: sql.NullString{String: item.Description, Valid: item.Description != ""},
+			PublishedAt: publishedAt,
+			FeedID:      next_feed.ID,
+		}
+
+		_, err := s.db.CreatePost(context.Background(), params)
+		if err != nil {
+			// Check if it's a duplicate URL error and ignore it
+			if strings.Contains(err.Error(), "unique constraint") || strings.Contains(err.Error(), "duplicate") {
+				continue // Skip this post, it already exists
+			}
+			// Log other errors but don't stop the scraping
+			log.Printf("Error creating post: %v", err)
+		}
 	}
 	return nil
 }
@@ -362,6 +430,7 @@ func main() {
 	cmds.register("following", middlewareLoggedIn(handlerFollowing))
 	cmds.register("addfeed", middlewareLoggedIn(handlerAddFeed))
 	cmds.register("unfollow", middlewareLoggedIn(handlerUnfollow))
+	cmds.register("browse", middlewareLoggedIn(handlerBrowse))
 
 	if len(os.Args) < 2 {
 		fmt.Println("not enough arguments provided")
